@@ -1,0 +1,7 @@
+{
+  "name": "Daily Cash Reconciliation Pro",
+  "description": "A professional financial tracking tool for daily business operations, featuring automated cash reconciliation, income analysis, and AI-powered financial insights.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

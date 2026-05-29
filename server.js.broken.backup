@@ -1,0 +1,263 @@
+
+console.log("RUNNING SERVER FILE:", new URL(import.meta.url).pathname);
+import express from "express";
+import cors from "cors";
+import path from "path";
+import { fileURLToPath } from "url";
+
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { google } from "googleapis";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const app = express();
+
+/** Middleware */
+app.use(cors());
+app.use(express.json({ limit: "50mb" }));
+
+/** Health check (Cloud Run friendly) */
+app.get("/health", (req, res) => res.status(200).send("ok"));
+
+/** Serve built frontend */
+app.use(express.static(path.join(__dirname, "dist")));
+
+/** Config */
+const SHEET_ID = process.env.SPREADSHEET_ID;
+const SHEET_NAME = process.env.SHEET_NAME || "Daily Closings";
+
+const toNumber = (val) => Number(val) || 0;
+
+/** 1) AI ANALYSIS */
+app.post("/api/analyze", async (req, res) => {
+  try {
+app.post("/api/analyze", async (req, res) => {
+  try {
+    console.log("DEPLOY STAMP: v2026-01-18-analyze-1");
+    console.log("GEMINI KEY EXISTS:", Boolean(process.env.GEMINI_API_KEY));
+    console.log("ENV GEMINI_MODEL:", process.env.GEMINI_MODEL);
+
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({ error: "Missing GEMINI_API_KEY" });
+    }    console.log("DEPLOY STAMP: v2026-01-18-analyze-1");
+    console.log("GEMINI KEY EXISTS:", Boolean(process.env.GEMINI_API_KEY));
+    console.log("ENV GEMINI_MODEL:", process.env.GEMINI_MODEL);
+
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(500).json({ error: "Missing GEMINI_API_KEY" });
+    }
+
+    // Accept base64 image
+    let imagePart = req.body.image || req.body.imageDataUrl;
+    if (!imagePart) {
+      return res.status(400).json({ error: "No image data received" });
+    }
+    if (typeof imagePart !== "string") {
+      return res.status(400).json({ error: "Image data must be a string" });
+    }
+    if (imagePart.includes("base64,")) {
+      imagePart = imagePart.split("base64,")[1];
+    }
+
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+    // IMPORTANT: Use env var (do NOT hardcode)
+
+
+
+    const prompt = `
+You are reading a handwritten daily cash reconciliation sheet.
+Return ONLY valid JSON (no markdown, no explanation).
+All fields must be numbers; use 0 if missing.
+
+{
+  "opening_cash": 0,
+  "z_out_total": 0,
+  "visa": 0,
+  "transfer_cliq": 0,
+  "unpaid_debt": 0,
+  "counted": 0,
+  "toys_extra": 0,
+  "birthdays": 0,
+  "subscriptions": 0,
+  "other_extra": 0,
+  "expenses_total": 0,
+  "owner_withdrawal": 0
+}
+`.trim();
+
+    const result = await model.generateContent([
+      prompt,
+      { inlineData: { data: imagePart, mimeType: "image/png" } }
+    ]);
+
+    let text = result.response.text() || "";
+    text = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+    console.log("AI raw:", text);
+
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      // Return raw if model didn't output valid JSON
+      return res.status(200).json({ ok: true, parsed: false, raw: text });
+    }
+
+    // Normalize numeric fields
+    const normalized = {
+      opening_cash: toNumber(parsed.opening_cash),
+      z_out_total: toNumber(parsed.z_out_total),
+      visa: toNumber(parsed.visa),
+      transfer_cliq: toNumber(parsed.transfer_cliq),
+      unpaid_debt: toNumber(parsed.unpaid_debt),
+      counted: toNumber(parsed.counted),
+      toys_extra: toNumber(parsed.toys_extra),
+      birthdays: toNumber(parsed.birthdays),
+      subscriptions: toNumber(parsed.subscriptions),
+      other_extra: toNumber(parsed.other_extra),
+      expenses_total: toNumber(parsed.expenses_total),
+      owner_withdrawal: toNumber(parsed.owner_withdrawal)
+    };
+
+    return res.json({ ok: true, parsed: true, data: normalized });
+  } catch (error) {
+    console.error("Analysis Error:", error);
+    return res.status(500).json({
+      error: "Analysis failed",
+      details: error?.message || String(error)
+    });
+  }
+});
+
+/** 2) SAVE TO SHEET (UPSERT + STRICT LOGIC) */
+app.post("/api/save", async (req, res) => {
+  try {
+    console.log("Starting Save Process...");
+
+    if (!SHEET_ID) {
+      return res.status(500).json({ error: "Missing SPREADSHEET_ID" });
+    }
+
+   
+
+    const data = req.body || {};
+
+    // Inputs
+    const opening = toNumber(data.opening_cash);
+    const zOut = toNumber(data.z_out_total);
+    const visa = toNumber(data.visa);
+    const cliq = toNumber(data.transfer_cliq);
+    const expenses = toNumber(data.expenses_total);
+    const counted = toNumber(data.counted);
+    const ownerWithdrawal = toNumber(data.owner_withdrawal);
+
+    // Extras
+    const toys = toNumber(data.toys_extra);
+    const events = toNumber(data.birthdays) + toNumber(data.subscriptions);
+    const other = toNumber(data.other_extra);
+
+    // Strict business logic
+    const totalSales = zOut + toys + events + other;
+    const expectedCashBeforeExpenses = totalSales - visa - cliq;
+    const expectedClosing =
+      opening + expectedCashBeforeExpenses - expenses - ownerWithdrawal;
+    const diff = counted - expectedClosing;
+
+// Google Auth (ADC – Cloud Run service account)
+const auth = new google.auth.GoogleAuth({
+  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+});
+
+const sheets = google.sheets({ version: "v4", auth });
+
+
+
+
+
+
+
+
+
+
+
+    // Verify sheet access
+    try {
+      await sheets.spreadsheets.values.get({
+        spreadsheetId: SHEET_ID,
+        range: `${SHEET_NAME}!A1`
+      });
+    } catch (e) {
+      console.error("Sheet access error:", e?.message || e);
+      return res.status(500).json({
+        error: `Google Sheet Access Failed. Check tab name '${SHEET_NAME}' and sharing permissions.`
+      });
+    }
+
+    // Row values (A-P)
+    const dateObj = new Date(data.date);
+    const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+
+    const rowValues = [
+      data.shift, // A
+      data.date, // B
+      days[dateObj.getDay()] || "Unknown", // C
+      opening, // D
+      zOut, // E
+      toys, // F
+      events, // G
+      other, // H
+      toNumber(data.unpaid_debt), // I
+      totalSales, // J
+      expenses, // K
+      visa, // L
+      expectedCashBeforeExpenses, // M
+      expectedClosing, // N
+      counted, // O
+      diff // P
+    ];
+
+    // Upsert by date in column B
+    const getRows = await sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `${SHEET_NAME}!B:B`
+    });
+
+    const existingDates = getRows.data.values ? getRows.data.values.flat() : [];
+    const rowIndex = existingDates.findIndex((d) => d === data.date);
+
+    if (rowIndex !== -1) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SHEET_ID,
+        range: `${SHEET_NAME}!A${rowIndex + 1}:P${rowIndex + 1}`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values: [rowValues] }
+      });
+      console.log(`Updated row for ${data.date}`);
+    } else {
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: SHEET_ID,
+        range: `${SHEET_NAME}!A:P`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values: [rowValues] }
+      });
+      console.log(`Appended row for ${data.date}`);
+    }
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error("FATAL SAVE ERROR:", error);
+    return res.status(500).json({ error: error?.message || "Save failed" });
+  }
+});
+
+/** React router fallback */
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "dist", "index.html"));
+});
+
+/** Start server */
+const PORT = Number(process.env.PORT) || 8080;
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`✅ Server running on port ${PORT}`);
+});
+  console.log(`✅ Server running on port ${PORT}`);
+});

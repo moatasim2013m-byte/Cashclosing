@@ -1,39 +1,20 @@
-# Cashclosing – Fetch Data from Cloud Run
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+</div>
 
-This script fetches data from a Google Cloud Run service and prints it as JSON (or writes it to a file).
+# Run and deploy your AI Studio app
 
-## Requirements
+This contains everything you need to run your app locally.
 
-- Python 3.8+
-- [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials) configured, **or** running on a GCP resource (Compute Engine, Cloud Run, etc.) whose service account has the `roles/run.invoker` IAM role on the target service.
+View your app in AI Studio: https://ai.studio/apps/drive/1i13-NEbLCkFO6w_OdZAdbt44yTKnQpu9
 
-## Setup
+## Run Locally
 
-```bash
-pip install -r requirements.txt
-```
+**Prerequisites:**  Node.js
 
-## Usage
 
-```bash
-# Minimal – prints JSON to stdout
-CLOUD_RUN_URL=https://<your-service>-<hash>-<region>.a.run.app python fetch_cloud_run_data.py
-
-# With a specific endpoint path
-CLOUD_RUN_URL=https://<your-service>-<hash>-<region>.a.run.app \
-CLOUD_RUN_PATH=/api/cashclosing \
-python fetch_cloud_run_data.py
-
-# Write output to a file
-CLOUD_RUN_URL=https://<your-service>-<hash>-<region>.a.run.app \
-OUTPUT_FILE=output.json \
-python fetch_cloud_run_data.py
-```
-
-## Environment Variables
-
-| Variable         | Required | Default | Description                                      |
-|------------------|----------|---------|--------------------------------------------------|
-| `CLOUD_RUN_URL`  | ✅       | –       | Base URL of the Cloud Run service                |
-| `CLOUD_RUN_PATH` | ❌       | `/`     | Endpoint path to call on the service             |
-| `OUTPUT_FILE`    | ❌       | –       | File path for JSON output (stdout if not set)    |
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`
