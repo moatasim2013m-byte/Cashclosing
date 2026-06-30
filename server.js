@@ -136,6 +136,11 @@ You are an expert accountant. Analyze this handwritten daily closing sheet with 
 * **Visa:** The smaller number labeled "Visa".
 * **CRITICAL:** If a number is crossed out, IGNORE IT. If there are two numbers for Visa, pick the **larger/cleaner** one (e.g., if 115 is crossed out and 144 is written, pick 144).
 
+### 6. BIRTHDAYS vs SCHOOLS (Keep Separate)
+* **birthdays:** Income from birthday parties / events (Not in Z-Out).
+* **schools:** Income from schools / school visits (Not in Z-Out). Keep this SEPARATE from birthdays.
+* **Action:** If you cannot tell them apart, put the value in 'birthdays' and leave 'schools' = 0.
+
 Return a STRICT JSON object:
 {
   "detected_date": "YYYY-MM-DD",
@@ -146,6 +151,7 @@ Return a STRICT JSON object:
   "owner_withdrawal": number,
   "toys_extra": number,
   "birthdays": number,
+  "schools": number,
   "subscriptions": number,
   "other_extra": number,
   "unpaid_debt": number,
@@ -185,7 +191,7 @@ Return a STRICT JSON object:
 
     const numericKeys = [
       "opening_cash", "z_out_total", "visa", "transfer_cliq",
-      "owner_withdrawal", "toys_extra", "birthdays", "subscriptions",
+      "owner_withdrawal", "toys_extra", "birthdays", "schools", "subscriptions",
       "other_extra", "unpaid_debt", "expenses_total", "non_cash_expenses",
       "counted"
     ];
@@ -221,6 +227,7 @@ app.post("/api/save", async (req, res) => {
     const zOut = toNumber(d.z_out_total);
     const toys = toNumber(d.toys_extra);
     const bday = toNumber(d.birthdays);
+    const schools = toNumber(d.schools);
     const subs = toNumber(d.subscriptions);
     const other = toNumber(d.other_extra);
     const expenses = toNumber(d.expenses_total); 
@@ -231,7 +238,7 @@ app.post("/api/save", async (req, res) => {
     const debts = toNumber(d.unpaid_debt);
     
     // CALCULATION LOGIC
-    const totalSalesAll = zOut + toys + subs + bday + other;
+    const totalSalesAll = zOut + toys + subs + bday + schools + other;
     const expectedFromSales = totalSalesAll - visa - cliq - debts;
     const expectedClosing = open + expectedFromSales - expenses - ownerWithdrawal;
     const difference = counted - expectedClosing;
@@ -239,9 +246,11 @@ app.post("/api/save", async (req, res) => {
     const dateObj = new Date(`${dateISO}T00:00:00`);
     const weekday = dateObj.toLocaleDateString("en-US", { weekday: "long" });
 
+    // NOTE: "schools" is the NEW column inserted right after "Birthdays/Events" (col H).
+    // Layout is now A:T (was A:S). All columns from "others" onward shifted one to the right.
     const row = [
-      shift, dateISO, weekday, open, zOut, toys, subs, bday, other, 
-      debts > 0 ? -debts : 0, totalSalesAll, ownerWithdrawal, expenses,cliq , visa, 
+      shift, dateISO, weekday, open, zOut, toys, subs, bday, schools, other,
+      debts > 0 ? -debts : 0, totalSalesAll, ownerWithdrawal, expenses,cliq , visa,
       expectedFromSales, expectedClosing, counted, difference,
     ];
 
@@ -267,7 +276,7 @@ app.post("/api/save", async (req, res) => {
     if (rowIndex !== -1) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: SHEET_ID,
-        range: `${SHEET_NAME}!A${rowIndex}:S${rowIndex}`,
+        range: `${SHEET_NAME}!A${rowIndex}:T${rowIndex}`,
         valueInputOption: "USER_ENTERED",
         requestBody: { values: [row] },
       });
@@ -275,7 +284,7 @@ app.post("/api/save", async (req, res) => {
     } else {
       await sheets.spreadsheets.values.append({
         spreadsheetId: SHEET_ID,
-        range: `${SHEET_NAME}!A:S`,
+        range: `${SHEET_NAME}!A:T`,
         valueInputOption: "USER_ENTERED",
         requestBody: { values: [row] },
       });

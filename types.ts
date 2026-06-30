@@ -15,6 +15,10 @@ export interface DailyClosingData {
 
   toys_extra: number;
   birthdays: number;
+
+  // ✅ NEW: Schools income, split out from the old "Birthdays/Events/schools" column
+  schools: number;
+
   subscriptions: number;
   other_extra: number;
 

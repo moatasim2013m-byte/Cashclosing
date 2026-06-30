@@ -10,6 +10,7 @@ export function calculateTotals(data: Partial<DailyClosingData>) {
   const extras =
     n(data.toys_extra) +
     n(data.birthdays) +
+    n(data.schools) +
     n(data.subscriptions) +
     n(data.other_extra);
 
