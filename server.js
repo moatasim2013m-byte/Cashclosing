@@ -287,6 +287,277 @@ app.post("/api/save", async (req, res) => {
   }
 });
 
+/* ===================== BIRTHDAY REMINDERS ===================== */
+// Data source: a "Birthdays" tab (kid name, birth date, parent name, phone).
+// Column headers are matched flexibly in English or Arabic.
+const BIRTHDAYS_SHEET_ID = process.env.BIRTHDAYS_SPREADSHEET_ID || SHEET_ID;
+const BIRTHDAYS_SHEET_NAME = process.env.BIRTHDAYS_SHEET_NAME || "Birthdays";
+const BIRTHDAY_REMINDER_DAYS = Number(process.env.BIRTHDAY_REMINDER_DAYS) || 15;
+const BIRTHDAY_DISCOUNT = process.env.BIRTHDAY_DISCOUNT || "20%";
+const BOOKING_PHONE = process.env.BOOKING_PHONE || "0777775652";
+const DEFAULT_COUNTRY_CODE = process.env.DEFAULT_COUNTRY_CODE || "962";
+// Optional: a Make/Zapier webhook that delivers messages via WhatsApp Business.
+const WHATSAPP_WEBHOOK_URL = process.env.WHATSAPP_WEBHOOK_URL || "";
+
+const HEADER_KEYWORDS = {
+  kidName: ["kid", "child", "اسم الطفل", "الطفل"],
+  birthDate: ["birth", "dob", "ميلاد"],
+  parentName: ["parent", "mother", "father", "guardian", "ولي", "الأم", "الأب"],
+  phone: ["phone", "mobile", "whatsapp", "رقم", "هاتف", "موبايل", "جوال", "واتس"],
+  lastWished: ["last wished", "wished", "تم التهنئة", "تهنئة"],
+};
+
+function findColumn(headers, keywords) {
+  for (let i = 0; i < headers.length; i++) {
+    const h = String(headers[i] || "").toLowerCase().trim();
+    if (h && keywords.some((k) => h.includes(k))) return i;
+  }
+  return -1;
+}
+
+// Accepts ISO, "October 5, 2020", and slashed dates (DD/MM/YYYY assumed when ambiguous).
+function parseBirthDate(value) {
+  if (!value) return null;
+  const s = String(value).trim();
+
+  const slashed = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})$/);
+  if (slashed) {
+    let [, a, b, y] = slashed;
+    a = Number(a);
+    b = Number(b);
+    y = Number(y.length === 2 ? "20" + y : y);
+    let day = a, month = b;
+    if (a > 12 && b <= 12) { day = a; month = b; }
+    else if (b > 12 && a <= 12) { day = b; month = a; }
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return { year: y, month, day };
+  }
+
+  const dt = new Date(s);
+  if (Number.isNaN(dt.getTime())) return null;
+  return { year: dt.getFullYear(), month: dt.getMonth() + 1, day: dt.getDate() };
+}
+
+// Next occurrence of month/day on or after `from` (Feb 29 celebrated Feb 28 in non-leap years).
+function nextBirthday(month, day, from) {
+  const start = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  for (const year of [start.getFullYear(), start.getFullYear() + 1]) {
+    let d = day;
+    if (month === 2 && day === 29) {
+      const isLeap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+      if (!isLeap) d = 28;
+    }
+    const candidate = new Date(year, month - 1, d);
+    if (candidate >= start) return candidate;
+  }
+  return null;
+}
+
+function normalizePhone(raw) {
+  if (!raw) return "";
+  let digits = String(raw).replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  if (digits.startsWith("0")) digits = DEFAULT_COUNTRY_CODE + digits.slice(1);
+  // Bare local numbers like 79xxxxxxx (no leading zero)
+  if (digits.length === 9 && digits.startsWith("7")) digits = DEFAULT_COUNTRY_CODE + digits;
+  return digits;
+}
+
+function buildWishMessage({ kidName, parentName, turnsAge, daysUntil }) {
+  const greeting = parentName ? `Hello ${parentName}! ` : "";
+  const when = daysUntil === 0 ? "TODAY" : `in ${daysUntil} day${daysUntil === 1 ? "" : "s"}`;
+  const age = turnsAge ? ` — turning ${turnsAge}` : "";
+  const whenAr = daysUntil === 0 ? "اليوم" : `بعد ${daysUntil} ${daysUntil === 1 ? "يوم" : "أيام"}`;
+  const ageAr = turnsAge ? ` ورح يتم ${turnsAge} 🥳` : "";
+
+  return (
+    `🎂🎉 ${greeting}${kidName}'s birthday is ${when}${age}! ` +
+    `Happy birthday from the whole Peekaboo family! 💙\n` +
+    `Because ${kidName} is a Peekaboo kid, celebrate with us and enjoy a special ${BIRTHDAY_DISCOUNT} discount on any birthday party package! 🎈🎁\n` +
+    `📞 Book now: ${BOOKING_PHONE}\n\n` +
+    `🎂 كل عام و${kidName} بألف خير! عيد ميلاده ${whenAr}${ageAr} 🎉\n` +
+    `ولأنه من أبناء بيكابو، بنقدملكم خصم خاص ${BIRTHDAY_DISCOUNT} على باقات حفلات أعياد الميلاد عنا! 🎈🎁\n` +
+    `📞 للحجز: ${BOOKING_PHONE}`
+  );
+}
+
+async function loadUpcomingBirthdays(days) {
+  const auth = new google.auth.GoogleAuth({
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  });
+  const sheets = google.sheets({ version: "v4", auth });
+
+  const resp = await sheets.spreadsheets.values.get({
+    spreadsheetId: BIRTHDAYS_SHEET_ID,
+    range: `${BIRTHDAYS_SHEET_NAME}!A:Z`,
+  });
+
+  const rows = resp.data.values || [];
+  if (rows.length < 2) return { upcoming: [], lastWishedCol: -1 };
+
+  const headers = rows[0];
+  const col = {
+    kidName: findColumn(headers, HEADER_KEYWORDS.kidName),
+    birthDate: findColumn(headers, HEADER_KEYWORDS.birthDate),
+    parentName: findColumn(headers, HEADER_KEYWORDS.parentName),
+    phone: findColumn(headers, HEADER_KEYWORDS.phone),
+    lastWished: findColumn(headers, HEADER_KEYWORDS.lastWished),
+  };
+  // Fall back to a generic "name" header for the kid column (avoid parent column).
+  if (col.kidName === -1) {
+    col.kidName = headers.findIndex(
+      (h, i) => i !== col.parentName && /name|اسم/i.test(String(h || ""))
+    );
+  }
+  if (col.kidName === -1 || col.birthDate === -1) {
+    throw new Error(
+      `Sheet "${BIRTHDAYS_SHEET_NAME}" must have a kid-name column and a birth-date column. Found headers: ${headers.join(", ")}`
+    );
+  }
+
+  const today = new Date();
+  const upcoming = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i] || [];
+    const kidName = String(r[col.kidName] || "").trim();
+    const birth = parseBirthDate(r[col.birthDate]);
+    if (!kidName || !birth) continue;
+
+    const next = nextBirthday(birth.month, birth.day, today);
+    if (!next) continue;
+
+    const daysUntil = Math.round(
+      (next - new Date(today.getFullYear(), today.getMonth(), today.getDate())) / 86400000
+    );
+    if (daysUntil > days) continue;
+
+    const parentName = col.parentName !== -1 ? String(r[col.parentName] || "").trim() : "";
+    const phone = col.phone !== -1 ? normalizePhone(r[col.phone]) : "";
+    const turnsAge = birth.year > 1900 ? next.getFullYear() - birth.year : null;
+    const lastWishedRaw = col.lastWished !== -1 ? String(r[col.lastWished] || "").trim() : "";
+    const lastWishedDate = lastWishedRaw ? new Date(lastWishedRaw) : null;
+    // Already wished for this upcoming birthday if the last wish is within the past year window.
+    const alreadyWished = !!(
+      lastWishedDate &&
+      !Number.isNaN(lastWishedDate.getTime()) &&
+      (next - lastWishedDate) / 86400000 <= 365 - 30 &&
+      lastWishedDate <= today
+    );
+
+    const message = buildWishMessage({ kidName, parentName, turnsAge, daysUntil });
+
+    upcoming.push({
+      row: i + 1,
+      kid_name: kidName,
+      parent_name: parentName,
+      phone,
+      birthday: `${birth.year > 1900 ? birth.year : "????"}-${String(birth.month).padStart(2, "0")}-${String(birth.day).padStart(2, "0")}`,
+      next_birthday: normalizeISODate(next),
+      days_until: daysUntil,
+      turns_age: turnsAge,
+      already_wished: alreadyWished,
+      message,
+      whatsapp_link: phone
+        ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
+        : null,
+    });
+  }
+
+  upcoming.sort((a, b) => a.days_until - b.days_until);
+  return { upcoming, lastWishedCol: col.lastWished, sheets };
+}
+
+// GET /api/birthdays/upcoming?days=15 → kids with a birthday within the window
+app.get("/api/birthdays/upcoming", async (req, res) => {
+  try {
+    if (!BIRTHDAYS_SHEET_ID) {
+      return res.status(500).json({ ok: false, error: "Missing SPREADSHEET_ID / BIRTHDAYS_SPREADSHEET_ID" });
+    }
+    const days = Math.min(60, Math.max(1, Number(req.query.days) || BIRTHDAY_REMINDER_DAYS));
+    const { upcoming } = await loadUpcomingBirthdays(days);
+    return res.json({
+      ok: true,
+      days,
+      count: upcoming.length,
+      auto_send_available: !!WHATSAPP_WEBHOOK_URL,
+      upcoming,
+    });
+  } catch (err) {
+    console.error("BIRTHDAYS_ERROR:", err);
+    return res.status(500).json({ ok: false, error: err?.message || "Failed to load birthdays" });
+  }
+});
+
+// POST /api/birthdays/send { days?, rows?: number[] }
+// Sends each wish through WHATSAPP_WEBHOOK_URL (e.g. a Make scenario that posts
+// to WhatsApp Business) and stamps the "Last Wished" column when present.
+app.post("/api/birthdays/send", async (req, res) => {
+  try {
+    if (!WHATSAPP_WEBHOOK_URL) {
+      return res.status(400).json({
+        ok: false,
+        error: "WHATSAPP_WEBHOOK_URL is not configured. Use the per-kid WhatsApp links instead.",
+      });
+    }
+    const days = Math.min(60, Math.max(1, Number(req.body?.days) || BIRTHDAY_REMINDER_DAYS));
+    const onlyRows = Array.isArray(req.body?.rows) ? req.body.rows.map(Number) : null;
+
+    const { upcoming, lastWishedCol, sheets } = await loadUpcomingBirthdays(days);
+    const targets = upcoming.filter(
+      (k) => k.phone && !k.already_wished && (!onlyRows || onlyRows.includes(k.row))
+    );
+
+    const results = [];
+    for (const kid of targets) {
+      try {
+        const resp = await fetch(WHATSAPP_WEBHOOK_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            phone: kid.phone,
+            message: kid.message,
+            kid_name: kid.kid_name,
+            parent_name: kid.parent_name,
+            birthday: kid.birthday,
+            next_birthday: kid.next_birthday,
+            days_until: kid.days_until,
+            turns_age: kid.turns_age,
+            discount: BIRTHDAY_DISCOUNT,
+          }),
+        });
+        if (!resp.ok) throw new Error(`Webhook responded ${resp.status}`);
+
+        if (lastWishedCol !== -1) {
+          const colLetter = String.fromCharCode(65 + lastWishedCol);
+          await sheets.spreadsheets.values.update({
+            spreadsheetId: BIRTHDAYS_SHEET_ID,
+            range: `${BIRTHDAYS_SHEET_NAME}!${colLetter}${kid.row}`,
+            valueInputOption: "USER_ENTERED",
+            requestBody: { values: [[normalizeISODate(new Date())]] },
+          });
+        }
+        results.push({ kid_name: kid.kid_name, phone: kid.phone, sent: true });
+      } catch (e) {
+        results.push({ kid_name: kid.kid_name, phone: kid.phone, sent: false, error: e.message });
+      }
+    }
+
+    const sent = results.filter((r) => r.sent).length;
+    return res.json({
+      ok: true,
+      sent,
+      failed: results.length - sent,
+      skipped: upcoming.length - targets.length,
+      results,
+    });
+  } catch (err) {
+    console.error("BIRTHDAYS_SEND_ERROR:", err);
+    return res.status(500).json({ ok: false, error: err?.message || "Send failed" });
+  }
+});
+
 /* ===================== SPA FALLBACK ===================== */
 app.get("*", (_req, res) => {
   res.sendFile(path.join(__dirname, "dist", "index.html"));
