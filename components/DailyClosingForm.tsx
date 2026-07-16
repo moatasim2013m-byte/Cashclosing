@@ -48,6 +48,7 @@ export default function DailyClosingForm() {
     toys_extra: 0,
     birthdays: 0,
     subscriptions: 0,
+    schools: 0,
     other_extra: 0,
     unpaid_debt: 0,
     expenses_total: 0,
@@ -60,11 +61,12 @@ export default function DailyClosingForm() {
   // ✅ INTERNAL MATH (Updated to subtract Owner Withdrawal)
   const { totalSales, expectedCash, diff } = useMemo(() => {
     // 1. Total Income
-    const totalSales = 
-      formData.z_out_total + 
-      formData.toys_extra + 
-      formData.birthdays + 
-      formData.subscriptions + 
+    const totalSales =
+      formData.z_out_total +
+      formData.toys_extra +
+      formData.birthdays +
+      formData.subscriptions +
+      formData.schools +
       formData.other_extra;
 
     // 2. Cash Expected in Drawer (The Fix is here!)
@@ -130,6 +132,7 @@ export default function DailyClosingForm() {
           toys_extra: ai.toys_extra,
           birthdays: ai.birthdays ?? ai.birthdays_extra,
           subscriptions: ai.subscriptions ?? ai.subscriptions_extra,
+          schools: ai.schools ?? ai.schools_extra,
           other_extra: ai.other_extra ?? ai.other_extra_income,
           unpaid_debt: ai.unpaid_debt,
           expenses_total: ai.expenses_total,
@@ -153,6 +156,7 @@ export default function DailyClosingForm() {
           toys_extra: Number(mapped.toys_extra) || 0,
           birthdays: Number(mapped.birthdays) || 0,
           subscriptions: Number(mapped.subscriptions) || 0,
+          schools: Number(mapped.schools) || 0,
           other_extra: Number(mapped.other_extra) || 0,
           unpaid_debt: Number(mapped.unpaid_debt) || 0,
           expenses_total: Number(mapped.expenses_total) || 0,
@@ -330,6 +334,12 @@ export default function DailyClosingForm() {
                 label="Subs"
                 name="subscriptions"
                 value={formData.subscriptions}
+                onChange={handleChange}
+              />
+              <InputGroup
+                label="Schools"
+                name="schools"
+                value={formData.schools}
                 onChange={handleChange}
               />
               <InputGroup

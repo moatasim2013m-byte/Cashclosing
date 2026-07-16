@@ -147,6 +147,7 @@ Return a STRICT JSON object:
   "toys_extra": number,
   "birthdays": number,
   "subscriptions": number,
+  "schools": number,
   "other_extra": number,
   "unpaid_debt": number,
   "expenses_total": number,
@@ -186,7 +187,7 @@ Return a STRICT JSON object:
     const numericKeys = [
       "opening_cash", "z_out_total", "visa", "transfer_cliq",
       "owner_withdrawal", "toys_extra", "birthdays", "subscriptions",
-      "other_extra", "unpaid_debt", "expenses_total", "non_cash_expenses",
+      "schools", "other_extra", "unpaid_debt", "expenses_total", "non_cash_expenses",
       "counted"
     ];
 
@@ -222,6 +223,7 @@ app.post("/api/save", async (req, res) => {
     const toys = toNumber(d.toys_extra);
     const bday = toNumber(d.birthdays);
     const subs = toNumber(d.subscriptions);
+    const schools = toNumber(d.schools);
     const other = toNumber(d.other_extra);
     const expenses = toNumber(d.expenses_total); 
     const visa = toNumber(d.visa);
@@ -231,7 +233,7 @@ app.post("/api/save", async (req, res) => {
     const debts = toNumber(d.unpaid_debt);
     
     // CALCULATION LOGIC
-    const totalSalesAll = zOut + toys + subs + bday + other;
+    const totalSalesAll = zOut + toys + subs + bday + schools + other;
     const expectedFromSales = totalSalesAll - visa - cliq - debts;
     const expectedClosing = open + expectedFromSales - expenses - ownerWithdrawal;
     const difference = counted - expectedClosing;
@@ -239,9 +241,14 @@ app.post("/api/save", async (req, res) => {
     const dateObj = new Date(`${dateISO}T00:00:00`);
     const weekday = dateObj.toLocaleDateString("en-US", { weekday: "long" });
 
+    // Column order must match the sheet header exactly (A -> T):
+    // A shift | B date | C day | D opening | E z-out | F toys | G subscription |
+    // H birthdays | I schools | J others | K debts not paid | L total sales |
+    // M owner withdrawal | N expenses | O transfer_cliq | P visa |
+    // Q expected from sales | R expected closing | S actual counted | T difference
     const row = [
-      shift, dateISO, weekday, open, zOut, toys, subs, bday, other, 
-      debts > 0 ? -debts : 0, totalSalesAll, ownerWithdrawal, expenses,cliq , visa, 
+      shift, dateISO, weekday, open, zOut, toys, subs, bday, schools, other,
+      debts > 0 ? -debts : 0, totalSalesAll, ownerWithdrawal, expenses, cliq, visa,
       expectedFromSales, expectedClosing, counted, difference,
     ];
 
@@ -267,7 +274,7 @@ app.post("/api/save", async (req, res) => {
     if (rowIndex !== -1) {
       await sheets.spreadsheets.values.update({
         spreadsheetId: SHEET_ID,
-        range: `${SHEET_NAME}!A${rowIndex}:S${rowIndex}`,
+        range: `${SHEET_NAME}!A${rowIndex}:T${rowIndex}`,
         valueInputOption: "USER_ENTERED",
         requestBody: { values: [row] },
       });
@@ -275,7 +282,7 @@ app.post("/api/save", async (req, res) => {
     } else {
       await sheets.spreadsheets.values.append({
         spreadsheetId: SHEET_ID,
-        range: `${SHEET_NAME}!A:S`,
+        range: `${SHEET_NAME}!A:T`,
         valueInputOption: "USER_ENTERED",
         requestBody: { values: [row] },
       });
