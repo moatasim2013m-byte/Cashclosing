@@ -11,6 +11,7 @@ export function calculateTotals(data: Partial<DailyClosingData>) {
     n(data.toys_extra) +
     n(data.birthdays) +
     n(data.subscriptions) +
+    n(data.schools) +
     n(data.other_extra);
 
   // 2. Z-report sales

@@ -16,6 +16,7 @@ export interface DailyClosingData {
   toys_extra: number;
   birthdays: number;
   subscriptions: number;
+  schools: number;
   other_extra: number;
 
   unpaid_debt: number;
